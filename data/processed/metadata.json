@@ -1,0 +1,26 @@
+{
+  "max_len": 200,
+  "num_users": 6040,
+  "num_genres": 18,
+  "genre_vocab": [
+    "Action",
+    "Adventure",
+    "Animation",
+    "Children's",
+    "Comedy",
+    "Crime",
+    "Documentary",
+    "Drama",
+    "Fantasy",
+    "Film-Noir",
+    "Horror",
+    "Musical",
+    "Mystery",
+    "Romance",
+    "Sci-Fi",
+    "Thriller",
+    "War",
+    "Western"
+  ],
+  "num_movies": 3953
+}
