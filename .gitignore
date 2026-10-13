@@ -1,5 +1,4 @@
 .venv/
-.behavior-fm/
 __pycache__/
 *.pyc
 data/raw/ml-1m.zip
