@@ -64,7 +64,7 @@ class EventEncoder(nn.Module):
             )
 
         if status_mode == "token":                # Token mode needs learned mask tokens
-            self.mask_tokens = nn.Parameters(     # Register mask tokens as trainable parameters
+            self.mask_tokens = nn.Parameter(      # Register mask tokens as trainable parameters
                 torch.randn(4, d) * 0.02          # One small random token per field group
             )
 
@@ -81,7 +81,7 @@ class EventEncoder(nn.Module):
         if self.status_mode == "add":
             return x + self.status_emd(status)
         
-        x = x + self.status_emb(status)                         # Token mode, still encode non-synthetic statuses additively
+        x = x + self.status_emd(status)                         # Token mode, still encode non-synthetic statuses additively
         is_synthetic = (status == 3).unsqueeze(-1)              # [B, T, 1], True where status is SYNTHETIC_MASK
         token = self.mask_tokens[field_index].view(1, 1, -1)    # Select this field's learned mask token.
         return torch.where(is_synthetic, token, x)              # Replace synthetic masked positions by token; keep others unchanged.
