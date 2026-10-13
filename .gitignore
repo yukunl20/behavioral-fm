@@ -1,8 +1,0 @@
-.venv/
-__pycache__/
-*.pyc
-data/raw/ml-1m.zip
-data/raw/ml-1m/
-data/processed/*.npy
-artifacts/
-.DS_Store
