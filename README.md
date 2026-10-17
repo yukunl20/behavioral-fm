@@ -48,6 +48,8 @@ Lower `val_objective` is better for reconstruction; higher `next_genre_probe_mic
 
 At this budget, `token` wins reconstruction, `zero` still leads the next-genre probe, and VIME’s very low effective rank suggests representation collapse rather than a fair loss of the ablation.
 
+Full run log (including the 300-step sanity check and VIME mask-loss weight sweep): see [EXPERIMENTS.md](EXPERIMENTS.md).
+
 ---
 
 ## Quick start
