@@ -2,7 +2,7 @@
 
 Self-supervised pretraining for a **behavioral foundation model** on MovieLens-1M user rating sequences.
 
-Each interaction is treated as a multi-field event (`movie_id`, `rating`, `time_gap`, `genres`). The model learns representations by reconstructing fields after controlled corruption — comparing how the encoder is told about masks (none / status embedding / learned mask token) and whether corruption is zero-fill or VIME-style donor replacement.
+Each interaction is treated as a multi-field event (`movie_id`, `rating`, `time_gap`, `genres`). The model learns representations by reconstructing fields after controlled corruption — comparing how the encoder is told about masks (`ignore` / `status_embed` / `mask_token`) and whether corruption is zero-fill or VIME-style donor replacement.
 
 This repo is an early research scaffold: data pipeline, corruption/encoder, and a short pretrain + linear-probe loop are in place. A temporal backbone and fuller downstream eval are still ahead.
 
@@ -17,7 +17,7 @@ This repo is an early research scaffold: data pipeline, corruption/encoder, and 
 | Dataset + pad collate | ✅ Done | `src/data/movielens.py` |
 | Field corruption (zero / donor) | ✅ Done | `src/objectives/corruption.py` |
 | Event encoder (base) | ✅ Done | Per-event field fusion |
-| Status modes + recon heads | ✅ Done | `none` / `add` / `token` + mask heads in `MaskedEventModel` |
+| Status modes + recon heads | ✅ Done | `ignore` / `status_embed` / `mask_token` + mask heads in `MaskedEventModel` |
 | Pretrain losses + train loop | ✅ Done | `scripts/pretrain.py` (4 ablation modes) + `scripts/compare.py` |
 | Smoke / unit checks | ✅ Done | `scripts/smoke_test.py`, `scripts/test.py` |
 | Temporal backbone over events | ⬜ Not started | Transformer / sequence model |
@@ -28,10 +28,10 @@ This repo is an early research scaffold: data pipeline, corruption/encoder, and 
 
 | Name | Corruption | Encoder `status_mode` | Idea |
 |------|------------|------------------------|------|
-| `zero` | zero-fill | `none` | Masked values only; no explicit mask signal |
-| `status` | zero-fill | `add` | Zero-fill + learned status embedding |
-| `token` | zero-fill | `token` | MAE/BERT-style learned mask tokens |
-| `vime` | donor replace | `none` | Hidden corruption label; predict which fields were corrupted |
+| `zero` | zero-fill | `ignore` | Masked values only; no explicit mask signal |
+| `status` | zero-fill | `status_embed` | Zero-fill + learned status embedding |
+| `token` | zero-fill | `mask_token` | MAE/BERT-style learned mask tokens |
+| `vime` | donor replace | `ignore` | Hidden corruption label; predict which fields were corrupted |
 
 ### Results
 

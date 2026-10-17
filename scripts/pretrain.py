@@ -326,10 +326,10 @@ def main():                            # Main CLI entry point.
 
     device = choose_device()             # Pick CUDA/MPS/CPU.
     status_mode = {                      # Map experiment mode to EventEncoder behavior.
-        "zero": "none",                # zero: ignore field_status.
-        "status": "add",               # status: add learned status embedding.
-        "token": "token",              # token: replace synthetic masked field with mask token.
-        "vime": "none",                # vime: hide status, so encoder sees all fields observed.
+        "zero": "ignore",              # zero: ignore field_status.
+        "status": "status_embed",      # status: projection + learned status embedding.
+        "token": "mask_token",         # token: replace MASKED field repr with learned mask token.
+        "vime": "ignore",              # vime: hide status, so encoder sees all fields observed.
     }[args.mode]
 
     model = MaskedEventModel(            # Build pretraining model.

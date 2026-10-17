@@ -14,7 +14,7 @@ N_FIELDS = 4       # Each event has four field groups in this dataset
 OBSERVED = 0             # Status index 0 represents observed event
 NATURAL_MISSING = 1      # Status index 1 represents natural missing event
 UNAVAILABLE = 2          # Status index 2 represents unavailable event
-SYNTHETIC_MASK = 3       # Status index 3 represents the field was deliberately masked/corrupted for pretraining
+MASKED = 3               # Status index 3: field was deliberately masked/corrupted for pretraining
 
 
 @dataclass
@@ -109,7 +109,7 @@ def zero_corrupt(
     )
 
     status = torch.zeros_like(field_mask, dtype=torch.long) # Start with all fields marked OBSERVED=0.
-    status[field_mask] = SYNTHETIC_MASK                     # Mark corrupted fields as SYNTHETIC_MASK=3.
+    status[field_mask] = MASKED                             # Mark corrupted fields as MASKED=3.
     return CorruptedBatch(values, field_mask, status)       # Package model inputs and supervision masks.
 
 
