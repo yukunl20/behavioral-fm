@@ -33,6 +33,21 @@ This repo is an early research scaffold: data pipeline, corruption/encoder, and 
 | `token` | zero-fill | `token` | MAE/BERT-style learned mask tokens |
 | `vime` | donor replace | `none` | Hidden corruption label; predict which fields were corrupted |
 
+### Results
+
+`--max-steps 3000` (~20 epochs over the train split) via `scripts/pretrain.py` + `scripts/compare.py`:
+
+| mode | val_objective ↓ | val_mask_accuracy | next_genre_probe_micro_ap ↑ | embedding_mean_dim_std | effective_rank | steps_per_second |
+|------|----------------:|------------------:|----------------------------:|-----------------------:|---------------:|-----------------:|
+| `zero` | 7.8116 | — | **0.3337** | 0.0914 | **22.46** | 19.7 |
+| `status` | 7.8014 | — | 0.3249 | 0.0878 | 10.79 | 20.3 |
+| `token` | **7.7904** | — | 0.3249 | 0.0938 | 12.32 | 19.8 |
+| `vime` | 8.1149 | 0.7506 | 0.2843 | 0.0809 | 1.57 | 19.9 |
+
+Lower `val_objective` is better for reconstruction; higher `next_genre_probe_micro_ap` is better for transfer. `val_mask_accuracy` only applies to VIME.
+
+At this budget, `token` wins reconstruction, `zero` still leads the next-genre probe, and VIME’s very low effective rank suggests representation collapse rather than a fair loss of the ablation.
+
 ---
 
 ## Quick start
