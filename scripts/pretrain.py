@@ -123,6 +123,7 @@ def evaluate_reconstruction(           # Evaluate validation objective on held-o
     device,                            # Device to run evaluation on.
     mode,                              # Experiment mode.
     mask_prob,                         # Corruption probability.
+    mask_loss_weight=0.5,              # VIME mask-estimation loss weight.
     max_batches=30,                    # Limit validation batches for speed.
 ):
     model.eval()                       # Put model in eval mode.
@@ -146,7 +147,7 @@ def evaluate_reconstruction(           # Evaluate validation objective on held-o
                 corrupted.field_mask,                                # Hidden corruption labels.
                 batch["valid_mask"],                                 # Padding mask.
             )
-            total = total + 0.5 * mloss                              # Add weighted VIME mask loss to objective.
+            total = total + mask_loss_weight * mloss                 # Add weighted VIME mask loss to objective.
             mask_acc.append(float(macc))                             # Store scalar mask accuracy.
 
         totals.append(float(total))                                  # Store scalar validation objective.
@@ -279,8 +280,20 @@ def main():                            # Main CLI entry point.
     parser.add_argument("--max-steps", type=int, default=300) # Number of training steps.
     parser.add_argument("--batch-size", type=int, default=32) # Training batch size.
     parser.add_argument("--mask-prob", type=float, default=0.25) # Field corruption probability.
+    parser.add_argument(
+        "--mask-loss-weight",
+        type=float,
+        default=0.5,
+        help="Weight on VIME mask-estimation loss (ignored for non-vime modes).",
+    )
     parser.add_argument("--d-model", type=int, default=64) # Event embedding width.
     parser.add_argument("--probe-epochs", type=int, default=200) # Linear probe epochs.
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Optional artifact name stem (default: day06_<mode>).",
+    )
     args = parser.parse_args()         # Parse CLI arguments.
 
     torch.manual_seed(7)               # Seed PyTorch for repeatability.
@@ -378,7 +391,7 @@ def main():                            # Main CLI entry point.
                     batch["valid_mask"], # Padding mask.
                 )
 
-                total = total + 0.5 * mask_loss # Add weighted VIME auxiliary loss.
+                total = total + args.mask_loss_weight * mask_loss # Add weighted VIME auxiliary loss.
 
             optimizer.zero_grad(set_to_none=True) # Clear gradients efficiently.
             total.backward()             # Backpropagate total objective.
@@ -411,6 +424,7 @@ def main():                            # Main CLI entry point.
         device,                           # Device.
         args.mode,                        # Experiment mode.
         args.mask_prob,                   # Corruption probability.
+        mask_loss_weight=args.mask_loss_weight,
     )
 
     x_train, y_train = collect_prefix_embeddings( # Collect train embeddings for linear probe.
@@ -437,11 +451,15 @@ def main():                            # Main CLI entry point.
 
     diagnostics = representation_diagnostics(x_val) # Compute embedding geometry metrics.
 
+    run_name = args.run_name or f"day06_{args.mode}"
+
     metrics = {                           # Build final metrics dictionary.
         "mode": args.mode,               # Experiment mode.
+        "run_name": run_name,            # Artifact stem for this run.
         "device": str(device),           # Device used.
         "max_steps": args.max_steps,     # Training step budget.
         "mask_prob": args.mask_prob,     # Corruption probability.
+        "mask_loss_weight": args.mask_loss_weight, # VIME auxiliary loss weight.
         "train_objective_last50": float(np.mean(running[-50:])), # Recent train objective.
         "seconds": elapsed,              # Total runtime.
         "steps_per_second": args.max_steps / elapsed, # Throughput.
@@ -458,22 +476,20 @@ def main():                            # Main CLI entry point.
             "metadata": metadata,        # Dataset metadata needed for reload.
             "args": vars(args),          # CLI arguments used for run.
         },
-        artifacts / f"day06_{args.mode}.pt", # Checkpoint path.
+        artifacts / f"{run_name}.pt",
     )
 
-    with open(                            # Open metrics JSON output path.
-        artifacts / f"day06_{args.mode}_metrics.json", "w"
-    ) as f:
-        json.dump(metrics, f, indent=2)   # Write metrics to disk.
+    with open(artifacts / f"{run_name}_metrics.json", "w") as f:
+        json.dump(metrics, f, indent=2)
 
-    np.save(                              # Save validation probe targets for bootstrap.
-        artifacts / f"day06_{args.mode}_probe_targets.npy", # Target array path.
-        y_val.numpy(),                    # [N_val,G] target labels.
+    np.save(
+        artifacts / f"{run_name}_probe_targets.npy",
+        y_val.numpy(),
     )
 
-    np.save(                              # Save validation probe scores for bootstrap.
-        artifacts / f"day06_{args.mode}_probe_scores.npy", # Score array path.
-        probe_scores.numpy(),             # [N_val,G] predicted probabilities.
+    np.save(
+        artifacts / f"{run_name}_probe_scores.npy",
+        probe_scores.numpy(),
     )
 
 
