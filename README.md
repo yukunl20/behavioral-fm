@@ -1,10 +1,93 @@
 # behavioral-fm
 
-Self-supervised pretraining for a **behavioral foundation model** on MovieLens-1M user rating sequences.
+A research scaffold for **behavioral foundation models**: how to encode user interaction histories so pretrained representations transfer to downstream tasks.
 
-Each interaction is treated as a multi-field event (`movie_id`, `rating`, `time_gap`, `genres`). The model learns representations by reconstructing fields after controlled corruption — comparing how the encoder is told about masks (`ignore` / `status_embed` / `mask_token`) and whether corruption is zero-fill or VIME-style donor replacement.
+The goal is not a single best architecture. It is to **compare encoding choices** under controlled ablations — what information is visible, how missingness is signaled, how sequences are mixed over time — and measure whether those choices produce useful foundation-model representations.
 
-This repo is an early research scaffold: data pipeline, corruption/encoder, and a short pretrain + linear-probe loop are in place. A temporal backbone and fuller downstream eval are still ahead.
+**Testbed.** MovieLens-1M user rating sequences. Each interaction is a multi-field event (`movie_id`, `rating`, `time_gap`, `genres`).
+
+**What we vary.**
+
+- **Field / mask encoding** — how the event encoder represents corrupted or missing fields: no status signal (`ignore`), a learned status embedding (`status_embed`), or MAE-style mask tokens (`mask_token`).
+- **Corruption mechanism** — zero-fill vs VIME-style donor replacement (and whether the encoder is told which fields were corrupted).
+- **Temporal encoding** — per-event models vs a sequence transformer with causal next-step, bidirectional masked reconstruction, and strict-prefix objectives.
+- **Transfer probes** — e.g. next-genre prediction, so representation quality is judged beyond reconstruction loss alone.
+
+**Current scope.** Data pipeline, corruption + event encoder, four pretrain ablations with a linear/MLP probe loop, and an early sequence backbone (`src/models/sequence.py`, `src/objectives/sequence_tasks.py`). Fuller downstream eval and longer temporal runs are still ahead.
+
+### Research loop
+
+```mermaid
+flowchart LR
+  A[User sequences] --> B[Encoding choice]
+  B --> C[SSL pretrain]
+  C --> D[Representation z]
+  D --> E[Transfer probe]
+  E --> F[Compare ablations]
+  F -.-> B
+```
+
+Vary the encoder / corruption / temporal mixing at **B**, keep data and probes fixed, then rank which encodings transfer.
+
+### Multi-field event
+
+Each timestep is a structured event, not a single token:
+
+```mermaid
+flowchart TB
+  subgraph Event["event at time t"]
+    M[movie_id]
+    R[rating]
+    G[time_gap]
+    S[genres]
+  end
+  Event --> Enc[Event encoder]
+  Enc --> Z["z_t ∈ R^D"]
+```
+
+### Encoding ablations
+
+Two knobs on top of the same events — **how** fields are hidden, and **whether** the encoder is told:
+
+```mermaid
+flowchart TB
+  subgraph Corruption
+    Z[zero-fill]
+    D[donor replace]
+  end
+  subgraph Status["status_mode"]
+    I[ignore]
+    E[status_embed]
+    T[mask_token]
+  end
+  Corruption --> Model[Event / sequence model]
+  Status --> Model
+  Model --> Probe[next-genre / recon metrics]
+```
+
+| Name | Corruption | `status_mode` | Idea |
+|------|------------|---------------|------|
+| `zero` | zero-fill | `ignore` | Hide values only |
+| `status` | zero-fill | `status_embed` | + learned observed/masked flag |
+| `token` | zero-fill | `mask_token` | + MAE-style mask tokens |
+| `vime` | donor | `ignore` | Swap in foreign values; hide the mask label |
+
+### Temporal objectives
+
+Once events are encoded, the sequence model tests different ways to mix time:
+
+```mermaid
+flowchart LR
+  subgraph Causal["causal next-genre"]
+    C1["h_t sees ≤ t"] --> C2["predict genres of t+1"]
+  end
+  subgraph Masked["masked item recon"]
+    M1["corrupt movie at t"] --> M2["bi-dir recover movie_id"]
+  end
+  subgraph Prefix["strict prefix"]
+    P1["see only 0..cut-1"] --> P2["predict genres at cut"]
+  end
+```
 
 ---
 
@@ -21,18 +104,9 @@ This repo is an early research scaffold: data pipeline, corruption/encoder, and 
 | Reconstruction decoder | ✅ Done | `--decoder linear|mlp` (default `mlp` residual trunk; probe still uses encoder `z`) |
 | Pretrain losses + train loop | ✅ Done | `scripts/pretrain.py` (4 ablation modes) + `scripts/compare.py` |
 | Smoke / unit checks | ✅ Done | `scripts/smoke_test.py`, `scripts/test.py` |
-| Temporal backbone over events | ⬜ Not started | Transformer / sequence model |
+| Temporal backbone over events | 🟡 In progress | `BehavioralSequenceModel` + causal / masked-item / strict-prefix losses |
 | Downstream eval | ⬜ Not started | Beyond next-genre linear probe |
-| Configs | ⬜ Not started | — |
-
-### Ablations
-
-| Name | Corruption | Encoder `status_mode` | Idea |
-|------|------------|------------------------|------|
-| `zero` | zero-fill | `ignore` | Masked values only; no explicit mask signal |
-| `status` | zero-fill | `status_embed` | Zero-fill + learned status embedding |
-| `token` | zero-fill | `mask_token` | MAE/BERT-style learned mask tokens |
-| `vime` | donor replace | `ignore` | Hidden corruption label; predict which fields were corrupted |
+| Configs | 🟡 In progress | `configs/experiment_modes.py` (ablation specs) |
 
 ### Results
 
