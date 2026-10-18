@@ -117,10 +117,33 @@ Shared defaults unless noted: `batch_size=32`, `mask_prob=0.25`, `d_model=64`, `
 
 ---
 
+## Exp 6 — Bootstrap probe-AP comparison (all four modes, MLP @ 3000)
+
+**Date:** 2026-10-17  
+**Goal:** Uncertainty on next-genre probe AP gaps for Exp 4 (`day06_mlp_*`).  
+**Command:** `python scripts/bootstrap.py --prefix day06_mlp --baseline zero --samples 1000`
+
+Point-estimate micro AP: token 0.3347, zero 0.3339, status 0.3329, vime 0.3158.
+
+Pairwise vs baseline `zero` (treatment − baseline):
+
+| mode | mean | 95% lo | 95% hi | P(diff > 0) |
+|------|-----:|-------:|-------:|------------:|
+| status | -0.0011 | -0.0063 | 0.0040 | 0.323 |
+| token | +0.0008 | -0.0035 | 0.0052 | 0.624 |
+| vime | -0.0179 | -0.0252 | -0.0104 | 0.000 |
+
+P(mode has highest AP on a bootstrap sample): token 0.535, zero 0.318, status 0.147, vime 0.000.
+
+**Takeaway:** Among MAE modes, `token`’s small edge over `zero` is **not** significant (95% CI covers 0). `vime` is significantly worse than `zero`. Do not over-claim a MAE winner from point estimates alone.
+
+---
+
 ## Open follow-ups
 
 - [x] Re-run mode ablation with `--decoder mlp` at 3000 steps (Exp 4); optional: explicit `--decoder linear` re-run for paired wall-clock compare
 - [x] Re-run VIME after donor entity-consistency fix (Exp 5)
+- [x] Bootstrap four-mode probe comparison (Exp 6)
 - [ ] Add a shared diversity regularizer (e.g. VICReg-style variance / covariance) and re-run VIME vs `zero`
 - [ ] Diagnose whether collapse is in per-event `z` or only after mean-pooling for the probe
 - [ ] Longer budget (e.g. 10k steps) for non-VIME modes only, if rankings remain noisy

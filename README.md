@@ -67,4 +67,8 @@ Compared with the earlier linear-head run @ 3000 steps, the MLP decoder raises e
 
 # Print a metrics table across modes
 .behavior-fm/bin/python scripts/compare.py
+
+# Bootstrap uncertainty on probe AP (all four modes)
+.behavior-fm/bin/python scripts/bootstrap.py --prefix day06_mlp
 ```
+
