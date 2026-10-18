@@ -62,8 +62,33 @@ Shared defaults unless noted: `batch_size=32`, `mask_prob=0.25`, `d_model=64`, `
 
 ---
 
+## Exp 4 — Mode ablation @ 3000 steps with MLP decoder
+
+**Date:** 2026-10-17  
+**Goal:** Test whether a richer residual MLP reconstruction decoder improves transfer vs Exp 2 (linear heads only).  
+**Command:**  
+`python scripts/pretrain.py --mode <mode> --max-steps 3000 --decoder mlp --run-name day06_mlp_<mode>`  
+**Artifacts:** `artifacts/day06_mlp_{zero,status,token,vime}_*`
+
+| mode | val_objective | val_mask_accuracy | next_genre_probe_micro_ap | embedding_mean_dim_std | effective_rank |
+|------|--------------:|------------------:|--------------------------:|-----------------------:|---------------:|
+| zero | **7.7867** | — | 0.3339 | 0.0765 | **24.10** |
+| status | 7.7958 | — | 0.3329 | 0.0762 | 18.01 |
+| token | 7.7990 | — | **0.3347** | 0.0757 | 22.18 |
+| vime | 8.1114 | 0.7497 | 0.3158 | 0.0550 | 7.30 |
+
+**vs Exp 2 (linear heads @ 3000):**
+- MAE modes: probe AP nearly flat (`zero` 0.3337→0.3339; `status`/`token` rise to ~0.33). Reconstruction slightly better for `zero`.
+- Effective rank improves for `status`/`token` (10.8/12.3 → 18.0/22.2) and especially VIME (1.57 → **7.30**).
+- VIME probe AP improves (0.284 → **0.316**) but still trails MAE modes.
+
+**Takeaway:** The MLP decoder helps representation geometry (higher effective rank, less VIME collapse) and lifts VIME transfer somewhat, but does not change the overall ranking much: MAE modes still lead the next-genre probe around 0.33–0.335.
+
+---
+
 ## Open follow-ups
 
+- [x] Re-run mode ablation with `--decoder mlp` at 3000 steps (Exp 4); optional: explicit `--decoder linear` re-run for paired wall-clock compare
 - [ ] Add a shared diversity regularizer (e.g. VICReg-style variance / covariance) and re-run VIME vs `zero`
 - [ ] Diagnose whether collapse is in per-event `z` or only after mean-pooling for the probe
 - [ ] Longer budget (e.g. 10k steps) for non-VIME modes only, if rankings remain noisy

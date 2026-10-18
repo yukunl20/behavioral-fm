@@ -156,21 +156,94 @@ class EventEncoder(nn.Module):
         return event
 
 
+class MlpDecoderBlock(nn.Module):
+    """Residual MLP block used as a richer reconstruction decoder trunk."""
+
+    def __init__(self, d_model, expansion=4, dropout=0.0):
+        super().__init__()
+        hidden = d_model * expansion
+        self.ff = nn.Sequential(
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, d_model),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return x + self.ff(x)  # [B, T, D] -> [B, T, D]
+
+
+class MlpDecoder(nn.Module):
+    """
+    Shared reconstruction decoder (MAE-style role): deepen the path from encoder
+    embeddings to field predictions. Transfer / probing should still use encoder z,
+    not decoder outputs.
+    """
+
+    def __init__(self, d_model, n_layers=2, expansion=4, dropout=0.0):
+        super().__init__()
+        if n_layers < 1:
+            raise ValueError("n_layers must be >= 1")
+        self.blocks = nn.ModuleList(
+            [
+                MlpDecoderBlock(d_model, expansion=expansion, dropout=dropout)
+                for _ in range(n_layers)
+            ]
+        )
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, z):
+        h = z
+        for block in self.blocks:
+            h = block(h)
+        return self.norm(h)
+
+
 class MaskedEventModel(nn.Module):
+    """
+    Event encoder + reconstruction decoder trunk + field heads.
+
+    decoder:
+      linear - Identity; heads read encoder z directly (legacy baseline).
+      mlp    - residual MLP trunk, then heads (richer reconstruction decoder).
+    """
+
     def __init__(
         self,
         num_movies,
         num_genres,
         d_model=64,
         status_mode="ignore",
+        decoder="mlp",
+        decoder_layers=2,
+        decoder_expansion=4,
+        decoder_dropout=0.0,
     ):
         super().__init__()
+        if decoder not in {"linear", "mlp"}:
+            raise ValueError(f"unknown decoder: {decoder}")
+
+        self.decoder_type = decoder
         self.encoder = EventEncoder(
             num_movies=num_movies,
             num_genres=num_genres,
             d_model=d_model,
             status_mode=status_mode,
         )
+
+        if decoder == "linear":
+            self.decoder = nn.Identity()
+        else:
+            self.decoder = MlpDecoder(
+                d_model=d_model,
+                n_layers=decoder_layers,
+                expansion=decoder_expansion,
+                dropout=decoder_dropout,
+            )
+
+        # Heads always map from d_model; for mlp they read decoder states h.
         self.movie_head = nn.Linear(d_model, num_movies)
         self.rating_head = nn.Linear(d_model, 1)
         self.time_head = nn.Linear(d_model, 1)
@@ -178,6 +251,7 @@ class MaskedEventModel(nn.Module):
         self.mask_head = nn.Linear(d_model, 4)
 
     def forward(self, values, field_status):
+        # z: encoder embedding used for probing / transfer (keep decoder out of this).
         z = self.encoder(
             movie_id=values["movie_id"],
             rating=values["rating"],
@@ -186,11 +260,14 @@ class MaskedEventModel(nn.Module):
             field_status=field_status,
             is_real_event=values["is_real_event"],
         )
+        # h: decoder state used only for reconstruction / mask heads.
+        h = self.decoder(z)
         return {
             "z": z,
-            "movie_logits": self.movie_head(z),
-            "rating_pred": self.rating_head(z).squeeze(-1),
-            "time_pred": self.time_head(z).squeeze(-1),
-            "genre_logits": self.genre_head(z),
-            "mask_logits": self.mask_head(z),
+            "h": h,
+            "movie_logits": self.movie_head(h),
+            "rating_pred": self.rating_head(h).squeeze(-1),
+            "time_pred": self.time_head(h).squeeze(-1),
+            "genre_logits": self.genre_head(h),
+            "mask_logits": self.mask_head(h),
         }

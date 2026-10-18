@@ -39,6 +39,27 @@ def test_zero_corruption_sets_status():          # Verify zero_corrupt writes MA
     assert not corrupted.field_status[0, 2].any()    # Padding position should remain all status 0.
 
 
+def test_mlp_decoder_keeps_encoder_z_for_probe():
+    from src.models.event_encoder import MaskedEventModel
+
+    batch = synthetic_batch()
+    model = MaskedEventModel(
+        num_movies=10,
+        num_genres=6,
+        d_model=32,
+        status_mode="ignore",
+        decoder="mlp",
+        decoder_layers=2,
+    )
+    status = torch.zeros(2, 3, 4, dtype=torch.long)
+    out = model(batch, status)
+    assert out["z"].shape == (2, 3, 32)
+    assert out["h"].shape == (2, 3, 32)
+    assert out["movie_logits"].shape == (2, 3, 10)
+    # Probe path must use encoder z, which can differ from decoder h.
+    assert not torch.equal(out["z"], out["h"])
+
+
 def test_encoder_zeros_padded_events():          # Verify EventEncoder output is zero at padded events.
     batch = synthetic_batch()                     # Create fake batch.
     model = EventEncoder(                         # Build a small encoder for test.

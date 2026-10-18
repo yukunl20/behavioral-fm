@@ -18,6 +18,7 @@ This repo is an early research scaffold: data pipeline, corruption/encoder, and 
 | Field corruption (zero / donor) | ✅ Done | `src/objectives/corruption.py` |
 | Event encoder (base) | ✅ Done | Per-event field fusion |
 | Status modes + recon heads | ✅ Done | `ignore` / `status_embed` / `mask_token` + mask heads in `MaskedEventModel` |
+| Reconstruction decoder | ✅ Done | `--decoder linear|mlp` (default `mlp` residual trunk; probe still uses encoder `z`) |
 | Pretrain losses + train loop | ✅ Done | `scripts/pretrain.py` (4 ablation modes) + `scripts/compare.py` |
 | Smoke / unit checks | ✅ Done | `scripts/smoke_test.py`, `scripts/test.py` |
 | Temporal backbone over events | ⬜ Not started | Transformer / sequence model |
@@ -35,20 +36,18 @@ This repo is an early research scaffold: data pipeline, corruption/encoder, and 
 
 ### Results
 
-`--max-steps 3000` (~20 epochs over the train split) via `scripts/pretrain.py` + `scripts/compare.py`:
+Latest: `--max-steps 3000` with `--decoder mlp` (Exp 4 in [EXPERIMENTS.md](EXPERIMENTS.md)):
 
-| mode | val_objective ↓ | val_mask_accuracy | next_genre_probe_micro_ap ↑ | embedding_mean_dim_std | effective_rank | steps_per_second |
-|------|----------------:|------------------:|----------------------------:|-----------------------:|---------------:|-----------------:|
-| `zero` | 7.8116 | — | **0.3337** | 0.0914 | **22.46** | 19.7 |
-| `status` | 7.8014 | — | 0.3249 | 0.0878 | 10.79 | 20.3 |
-| `token` | **7.7904** | — | 0.3249 | 0.0938 | 12.32 | 19.8 |
-| `vime` | 8.1149 | 0.7506 | 0.2843 | 0.0809 | 1.57 | 19.9 |
+| mode | val_objective ↓ | val_mask_accuracy | next_genre_probe_micro_ap ↑ | embedding_mean_dim_std | effective_rank |
+|------|----------------:|------------------:|----------------------------:|-----------------------:|---------------:|
+| `zero` | **7.7867** | — | 0.3339 | 0.0765 | **24.10** |
+| `status` | 7.7958 | — | 0.3329 | 0.0762 | 18.01 |
+| `token` | 7.7990 | — | **0.3347** | 0.0757 | 22.18 |
+| `vime` | 8.1114 | 0.7497 | 0.3158 | 0.0550 | 7.30 |
 
 Lower `val_objective` is better for reconstruction; higher `next_genre_probe_micro_ap` is better for transfer. `val_mask_accuracy` only applies to VIME.
 
-At this budget, `token` wins reconstruction, `zero` still leads the next-genre probe, and VIME’s very low effective rank suggests representation collapse rather than a fair loss of the ablation.
-
-Full run log (including the 300-step sanity check and VIME mask-loss weight sweep): see [EXPERIMENTS.md](EXPERIMENTS.md).
+Compared with the earlier linear-head run @ 3000 steps, the MLP decoder raises effective rank (VIME 1.57→7.30) and VIME probe AP (0.284→0.316), while MAE probe scores stay ~0.33–0.335. Full history: [EXPERIMENTS.md](EXPERIMENTS.md).
 
 ---
 
@@ -60,10 +59,11 @@ Full run log (including the 300-step sanity check and VIME mask-loss weight swee
 .behavior-fm/bin/python scripts/prepare_sequences.py
 
 # Pretrain one ablation (writes artifacts/day06_<mode>_*)
-.behavior-fm/bin/python scripts/pretrain.py --mode zero
-.behavior-fm/bin/python scripts/pretrain.py --mode status
-.behavior-fm/bin/python scripts/pretrain.py --mode token
-.behavior-fm/bin/python scripts/pretrain.py --mode vime
+# Default --decoder mlp (richer); use --decoder linear for the old heads-only baseline.
+.behavior-fm/bin/python scripts/pretrain.py --mode zero --max-steps 3000
+.behavior-fm/bin/python scripts/pretrain.py --mode status --max-steps 3000
+.behavior-fm/bin/python scripts/pretrain.py --mode token --max-steps 3000
+.behavior-fm/bin/python scripts/pretrain.py --mode vime --max-steps 3000
 
 # Print a metrics table across modes
 .behavior-fm/bin/python scripts/compare.py

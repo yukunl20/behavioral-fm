@@ -287,6 +287,15 @@ def main():                            # Main CLI entry point.
         help="Weight on VIME mask-estimation loss (ignored for non-vime modes).",
     )
     parser.add_argument("--d-model", type=int, default=64) # Event embedding width.
+    parser.add_argument(
+        "--decoder",
+        choices=["linear", "mlp"],
+        default="mlp",
+        help="Reconstruction decoder: linear heads only, or shared residual MLP trunk.",
+    )
+    parser.add_argument("--decoder-layers", type=int, default=2)
+    parser.add_argument("--decoder-expansion", type=int, default=4)
+    parser.add_argument("--decoder-dropout", type=float, default=0.0)
     parser.add_argument("--probe-epochs", type=int, default=200) # Linear probe epochs.
     parser.add_argument(
         "--run-name",
@@ -350,6 +359,10 @@ def main():                            # Main CLI entry point.
         num_genres=metadata["num_genres"], # Genre vector size.
         d_model=args.d_model,            # Event embedding width.
         status_mode=status_mode,         # Selected status behavior.
+        decoder=args.decoder,            # linear baseline or richer mlp decoder.
+        decoder_layers=args.decoder_layers,
+        decoder_expansion=args.decoder_expansion,
+        decoder_dropout=args.decoder_dropout,
     ).to(device)                         # Move model to device.
 
     optimizer = torch.optim.AdamW(       # Optimizer for all model parameters.
@@ -460,6 +473,10 @@ def main():                            # Main CLI entry point.
         "max_steps": args.max_steps,     # Training step budget.
         "mask_prob": args.mask_prob,     # Corruption probability.
         "mask_loss_weight": args.mask_loss_weight, # VIME auxiliary loss weight.
+        "decoder": args.decoder,         # linear or mlp reconstruction decoder.
+        "decoder_layers": args.decoder_layers,
+        "decoder_expansion": args.decoder_expansion,
+        "decoder_dropout": args.decoder_dropout,
         "train_objective_last50": float(np.mean(running[-50:])), # Recent train objective.
         "seconds": elapsed,              # Total runtime.
         "steps_per_second": args.max_steps / elapsed, # Throughput.
