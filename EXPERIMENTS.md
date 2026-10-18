@@ -86,9 +86,41 @@ Shared defaults unless noted: `batch_size=32`, `mask_prob=0.25`, `d_model=64`, `
 
 ---
 
+## Bugfix — VIME donor entity consistency
+
+**Issue:** `movie_id` and `genres` share one corruption decision, but `donor_corrupt` used to call `_replace_with_donors` separately per field, each with a fresh donor permutation. A corrupted movie could get genres from a different donor event.
+
+**Fix:** sample one shared `entity_donors` permutation for movie+genres; rating and time_gap keep independent donor perms. Covered by `test_donor_corrupt_keeps_movie_genre_entity`.
+
+**Follow-up:** re-run VIME (Exp 2/4) after this fix; prior VIME numbers may be slightly optimistic/pessimistic due to inconsistent entities.
+
+---
+
+## Exp 5 — VIME after donor fix: linear vs MLP decoder @ 3000 steps
+
+**Date:** 2026-10-17  
+**Goal:** Re-measure VIME with entity-consistent donors; compare `--decoder linear` vs `--decoder mlp`.  
+**Command:**  
+`python scripts/pretrain.py --mode vime --max-steps 3000 --decoder <linear|mlp> --run-name day06_vime_fixed_<decoder>`  
+**Artifacts:** `artifacts/day06_vime_fixed_{linear,mlp}_*`
+
+| decoder | val_objective | val_mask_accuracy | next_genre_probe_micro_ap | embedding_mean_dim_std | effective_rank |
+|---------|--------------:|------------------:|--------------------------:|-----------------------:|---------------:|
+| linear | 8.1161 | 0.7490 | 0.2877 | 0.0836 | 1.56 |
+| mlp | 8.1123 | 0.7496 | **0.3146** | 0.0544 | **7.21** |
+
+**vs pre-fix VIME (same budget):**
+- linear: probe 0.2843→0.2877, rank ~1.57→1.56 (essentially unchanged; still collapsed)
+- mlp: probe 0.3158→0.3146, rank 7.30→7.21 (essentially unchanged)
+
+**Takeaway:** Fixing movie/genre donor consistency does **not** materially change VIME metrics. The MLP decoder still helps VIME a lot vs linear heads (probe ~0.29→0.31, rank ~1.6→7.2), but VIME remains behind MAE `zero`/`token` (~0.33–0.335 probe, rank ~22–24).
+
+---
+
 ## Open follow-ups
 
 - [x] Re-run mode ablation with `--decoder mlp` at 3000 steps (Exp 4); optional: explicit `--decoder linear` re-run for paired wall-clock compare
+- [x] Re-run VIME after donor entity-consistency fix (Exp 5)
 - [ ] Add a shared diversity regularizer (e.g. VICReg-style variance / covariance) and re-run VIME vs `zero`
 - [ ] Diagnose whether collapse is in per-event `z` or only after mean-pooling for the probe
 - [ ] Longer budget (e.g. 10k steps) for non-VIME modes only, if rankings remain noisy

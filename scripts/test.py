@@ -5,8 +5,9 @@ from src.objectives.corruption import (            # Import corruption utilities
     GENRES,                                      # Field index for genres.
     MASKED,                                      # Status code for deliberately masked fields.
     MOVIE,                                       # Field index for movie_id.
-    sample_corruption_mask,                           # Function that samples synthetic field corruption masks.
-    zero_corrupt,                                # Function that zero-fills masked values and sets field_status.
+    donor_corrupt,                               # VIME donor replacement.
+    sample_corruption_mask,                      # Sample which fields to corrupt.
+    zero_corrupt,                                # Zero-fill corruption + MASKED status.
 )
 
 
@@ -29,6 +30,41 @@ def test_padding_is_never_corrupted():           # Verify corruption sampler res
     corruption_mask = sample_corruption_mask(batch["is_real_event"], 0.999)
     assert not corruption_mask[0, 2].any()        # Padded event [0,2] must not be corrupted in any field.
     assert torch.equal(corruption_mask[..., MOVIE], corruption_mask[..., GENRES])
+
+
+def test_donor_corrupt_keeps_movie_genre_entity():
+    """movie_id and genres share a corruption mask, so donors must be the same event."""
+    batch = synthetic_batch()
+    # Give each real event a unique (movie_id, genres) pair.
+    batch["movie_id"] = torch.tensor([[10, 20, 0], [30, 40, 50]])
+    genres = torch.zeros(2, 3, 6)
+    genres[0, 0, 0] = 1.0
+    genres[0, 1, 1] = 1.0
+    genres[1, 0, 2] = 1.0
+    genres[1, 1, 3] = 1.0
+    genres[1, 2, 4] = 1.0
+    batch["genres"] = genres
+
+    pair = {}
+    is_real = batch["is_real_event"]
+    for b in range(2):
+        for t in range(3):
+            if is_real[b, t]:
+                mid = int(batch["movie_id"][b, t])
+                pair[mid] = batch["genres"][b, t].clone()
+
+    corruption_mask = torch.zeros(2, 3, 4, dtype=torch.bool)
+    corruption_mask[..., MOVIE] = is_real
+    corruption_mask[..., GENRES] = is_real
+    corrupted = donor_corrupt(batch, corruption_mask)
+
+    for b in range(2):
+        for t in range(3):
+            if not is_real[b, t]:
+                continue
+            mid = int(corrupted.values["movie_id"][b, t])
+            assert mid in pair
+            assert torch.equal(corrupted.values["genres"][b, t], pair[mid])
 
 
 def test_zero_corruption_sets_status():          # Verify zero_corrupt writes MASKED status.

@@ -116,31 +116,45 @@ def zero_corrupt(
     return CorruptedBatch(values, corruption_mask, status)
 
 
+def _real_event_index(is_real_event: torch.Tensor) -> torch.Tensor:
+    """Flat indices of real (non-padding) events in a [B, T] layout."""
+    return is_real_event.reshape(-1).nonzero(as_tuple=False).squeeze(1)
+
+
+def _sample_donor_index(real_index: torch.Tensor, device) -> torch.Tensor:
+    """
+    One random permutation of real_index used as donor sources.
+    Same length as real_index; entry i is the donor for the i-th real event
+    when that event is selected for replacement.
+    """
+    if real_index.numel() == 0:
+        return real_index
+    return real_index[torch.randperm(real_index.numel(), device=device)]
+
+
 def _replace_with_donors(
     x: torch.Tensor,                 # Field tensor, [B, T] or [B, T, K]
     is_real_event: torch.Tensor,     # [B, T] True = real event (not padding)
     replace_mask: torch.Tensor,      # [B, T] True = positions to replace with a donor
+    real_index: torch.Tensor,        # Flat indices of real events
+    donor_index: torch.Tensor,       # Donor source for each real-event slot (same perm for grouped fields)
 ) -> torch.Tensor:
     """
     Helper for VIME-style donor replacement.
     Donors are sampled only from real (non-padding) event positions.
+    Pass the same donor_index for fields that must stay entity-consistent
+    (movie_id and genres when they share a corruption mask).
     """
 
     out = x.clone()
     B, T = is_real_event.shape
     trailing_shape = x.shape[2:]
 
-    flat = x.reshape(B * T, *trailing_shape)
-    out_flat = out.reshape(B * T, *trailing_shape)
-
-    real_index = is_real_event.reshape(-1).nonzero(as_tuple=False).squeeze(1)
-
     if real_index.numel() == 0:
         return out
 
-    donor_index = real_index[
-        torch.randperm(real_index.numel(), device=x.device)
-    ]
+    flat = x.reshape(B * T, *trailing_shape)
+    out_flat = out.reshape(B * T, *trailing_shape)
 
     selected = replace_mask.reshape(-1)[real_index]
     target_index = real_index[selected]
@@ -157,21 +171,48 @@ def donor_corrupt(
     """
     VIME-style corruption: use valid donor values from other event rows.
     Do not reveal MASKED status to the encoder (field_status stays OBSERVED).
+
+    movie_id and genres share one donor permutation so a corrupted entity stays
+    consistent (same donor event for both fields). rating and time_gap each get
+    their own independent donor permutation.
     """
     values = _base_values(batch)
     is_real = batch["is_real_event"]
+    real_index = _real_event_index(is_real)
 
+    # Shared donors for the movie+genres entity group.
+    entity_donors = _sample_donor_index(real_index, is_real.device)
     values["movie_id"] = _replace_with_donors(
-        values["movie_id"], is_real, corruption_mask[..., MOVIE]
-    )
-    values["rating"] = _replace_with_donors(
-        values["rating"], is_real, corruption_mask[..., RATING]
-    )
-    values["time_gap_hours"] = _replace_with_donors(
-        values["time_gap_hours"], is_real, corruption_mask[..., TIME_GAP]
+        values["movie_id"],
+        is_real,
+        corruption_mask[..., MOVIE],
+        real_index,
+        entity_donors,
     )
     values["genres"] = _replace_with_donors(
-        values["genres"], is_real, corruption_mask[..., GENRES]
+        values["genres"],
+        is_real,
+        corruption_mask[..., GENRES],
+        real_index,
+        entity_donors,
+    )
+
+    rating_donors = _sample_donor_index(real_index, is_real.device)
+    values["rating"] = _replace_with_donors(
+        values["rating"],
+        is_real,
+        corruption_mask[..., RATING],
+        real_index,
+        rating_donors,
+    )
+
+    time_donors = _sample_donor_index(real_index, is_real.device)
+    values["time_gap_hours"] = _replace_with_donors(
+        values["time_gap_hours"],
+        is_real,
+        corruption_mask[..., TIME_GAP],
+        real_index,
+        time_donors,
     )
 
     status = torch.zeros_like(corruption_mask, dtype=torch.long)
