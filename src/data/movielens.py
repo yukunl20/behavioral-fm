@@ -53,10 +53,8 @@ def collate_sequences(batch):
     time_gap = torch.zeros(B, T)                        # [B, T]
     genres = torch.zeros(B, T, G)                       # [B, T, G]
 
-    # valid_mask tells us which positions are real events.
-    # True  = real event
-    # False = padding position
-    valid_mask = torch.zeros(B, T, dtype=torch.bool)    # [B, T]
+    # is_real_event: True = real event, False = sequence padding (not corruption).
+    is_real_event = torch.zeros(B, T, dtype=torch.bool)    # [B, T]
 
     # user_id has one scalar per sequence.
     user_id = torch.stack([x["user_id"] for x in batch]) # [B]
@@ -71,8 +69,8 @@ def collate_sequences(batch):
         time_gap[i, :n] = x["time_gap_hours"]
         genres[i, :n] = x["genres"]
 
-        # Mark real positions.
-        valid_mask[i, :n] = True
+        # Mark real (non-padding) positions.
+        is_real_event[i, :n] = True
 
     return {
         "user_id": user_id,                 # [B]
@@ -80,5 +78,5 @@ def collate_sequences(batch):
         "rating": rating,                   # [B, T]
         "time_gap_hours": time_gap,         # [B, T]
         "genres": genres,                   # [B, T, G]
-        "valid_mask": valid_mask,           # [B, T]
+        "is_real_event": is_real_event,     # [B, T] True=real event, False=padding
     }

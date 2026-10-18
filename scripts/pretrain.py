@@ -26,7 +26,7 @@ from src.objectives.corruption import ( # Import field indices and corruption fu
     TIME_GAP,                          # Field index for time_gap_hours.
     GENRES,                            # Field index for genres.
     donor_corrupt,                     # VIME-style donor replacement corruption.
-    sample_field_mask,                 # Sample which fields to corrupt.
+    sample_corruption_mask,                 # Sample which fields to corrupt.
     zero_corrupt,                      # Zero-fill corruption used by zero/status/token modes.
 )
 
@@ -47,7 +47,7 @@ def masked_mean(x, mask):
     mask = mask.to(x.dtype)  # convert boolean mask to float so multiplication works
     return (x * mask).sum() / mask.sum().clamp_min(1.0)
 
-def reconstruction_losses(outputs, clean, field_mask):     # MAE-style loss
+def reconstruction_losses(outputs, clean, corruption_mask):     # MAE-style loss
     B, T = clean["movie_id"].shape
 
     movie = F.cross_entropy(
@@ -56,11 +56,11 @@ def reconstruction_losses(outputs, clean, field_mask):     # MAE-style loss
         reduction="none"                                # Keep per-position losses instead of averaging immediately
     ).reshape(B, T)                                 
 
-    movie = masked_mean(movie, field_mask[..., MOVIE])              # Average only where movie field was corrupted
+    movie = masked_mean(movie, corruption_mask[..., MOVIE])              # Average only where movie field was corrupted
 
     rating_target = clean["rating"] / 5.0                           # Normalize clean rating to roughly [0,1].
     rating = (outputs["rating_pred"] - rating_target).pow(2) 
-    rating = masked_mean(rating, field_mask[..., RATING])           # Average only where rating was corrupted.
+    rating = masked_mean(rating, corruption_mask[..., RATING])           # Average only where rating was corrupted.
 
     time_target = torch.log1p(                                      # Create log-compressed time-gap reconstruction target.
         clean["time_gap_hours"].clamp_min(0.0)                      # Avoid negative values before log1p.
@@ -70,14 +70,14 @@ def reconstruction_losses(outputs, clean, field_mask):     # MAE-style loss
         time_target,                                                # Clean target [B,T].
         reduction="none",                                           # Keep per-position losses.
     )
-    time_loss = masked_mean(time_loss, field_mask[..., TIME_GAP])   # Average only where time gap was corrupted.
+    time_loss = masked_mean(time_loss, corruption_mask[..., TIME_GAP])   # Average only where time gap was corrupted.
 
     genre = F.binary_cross_entropy_with_logits(                     # Multi-label BCE for genre vector reconstruction.
         outputs["genre_logits"],                                    # Predicted genre logits [B,T,G].
         clean["genres"],                                            # Clean multi-hot genre targets [B,T,G].
         reduction="none",                                           # Keep per-label losses.
     ).mean(dim=-1)                                                  # Average over genre labels to get [B,T] loss.
-    genre = masked_mean(genre, field_mask[..., GENRES])             # Average only where genres were corrupted.
+    genre = masked_mean(genre, corruption_mask[..., GENRES])             # Average only where genres were corrupted.
 
     total = movie + rating + 0.5 * time_loss + genre                # Combine field losses; downweight time loss slightly.
     return {                                                        # Return total and components for possible logging/debugging.
@@ -89,31 +89,31 @@ def reconstruction_losses(outputs, clean, field_mask):     # MAE-style loss
     }
 
 
-def mask_estimation_loss(outputs, field_mask, valid_mask):          # VIME auxiliary objective.
+def mask_estimation_loss(outputs, corruption_mask, is_real_event):          # VIME auxiliary objective.
     raw = F.binary_cross_entropy_with_logits(                       # BCE for predicting whether each field was corrupted.
         outputs["mask_logits"],                                     # [B,T,4] predicted corruption logits.
-        field_mask.float(),                                         # [B,T,4] corruption labels converted to float.
+        corruption_mask.float(),                                         # [B,T,4] corruption labels converted to float.
         reduction="none",                                           # Keep per-position per-field losses.
     )
-    valid_fields = valid_mask.unsqueeze(-1).expand_as(field_mask)   # Expand [B,T] to [B,T,4].
-    loss = masked_mean(raw, valid_fields)                           # Average only over real event fields, not padding.
+    real_fields = is_real_event.unsqueeze(-1).expand_as(corruption_mask)  # [B,T] -> [B,T,4]
+    loss = masked_mean(raw, real_fields)                            # Average only over real events, not padding.
 
     prediction = outputs["mask_logits"].sigmoid() >= 0.5            # Convert logits to boolean predictions.
     accuracy = (                                                    # Compute raw field-level accuracy.
-        prediction[valid_fields] == field_mask[valid_fields]        # Compare only valid fields.
+        prediction[real_fields] == corruption_mask[real_fields]     # Compare only real (non-pad) fields.
     ).float().mean()                                                # Average boolean correctness.
     return loss, accuracy                                           # Return scalar BCE loss and scalar accuracy.
 
 
 def build_corruption(batch, mode, mask_prob):                       # Create corrupted batch according to experiment mode.
-    field_mask = sample_field_mask(                                 # Sample which fields should be corrupted.
-        batch["valid_mask"],                                        # Use valid_mask to avoid corrupting padding.
+    corruption_mask = sample_corruption_mask(                                 # Sample which fields should be corrupted.
+        batch["is_real_event"],                                        # Use is_real_event to avoid corrupting padding.
         mask_prob=mask_prob,                                        # Probability of masking/corrupting fields.
         group_movie_genres=True,                                    # Mask movie_id and genres together to avoid lookup leakage.
     )
     if mode == "vime":                                              # VIME uses donor replacement and hides status.
-        return donor_corrupt(batch, field_mask)                     # Return donor-corrupted batch.
-    return zero_corrupt(batch, field_mask)                          # zero/status/token all start from zero corruption.
+        return donor_corrupt(batch, corruption_mask)                     # Return donor-corrupted batch.
+    return zero_corrupt(batch, corruption_mask)                          # zero/status/token all start from zero corruption.
 
 
 @torch.no_grad()                       # Disable gradients during validation.
@@ -137,15 +137,15 @@ def evaluate_reconstruction(           # Evaluate validation objective on held-o
         corrupted = build_corruption(batch, mode, mask_prob)         # Apply same corruption mechanism as training.
         outputs = model(corrupted.values, corrupted.field_status)    # Run model on corrupted inputs.
         losses = reconstruction_losses(                              # Compute reconstruction loss against clean batch.
-            outputs, batch, corrupted.field_mask
+            outputs, batch, corrupted.corruption_mask
         )
         total = losses["total"]                                      # Start validation objective from reconstruction loss.
 
         if mode == "vime":                                           # VIME also has mask-estimation objective.
             mloss, macc = mask_estimation_loss(                      # Compute mask prediction loss and accuracy.
                 outputs,                                             # Model outputs include mask_logits.
-                corrupted.field_mask,                                # Hidden corruption labels.
-                batch["valid_mask"],                                 # Padding mask.
+                corrupted.corruption_mask,                                # Hidden corruption labels.
+                batch["is_real_event"],                                 # Real vs padding.
             )
             total = total + mask_loss_weight * mloss                 # Add weighted VIME mask loss to objective.
             mask_acc.append(float(macc))                             # Store scalar mask accuracy.
@@ -178,8 +178,8 @@ def collect_prefix_embeddings(         # Build frozen user representations for l
         if max_batches is not None and step >= max_batches: # Optional early stop.
             break                      # Stop collecting.
         batch = move_batch(batch, device) # Move batch to device.
-        valid = batch["valid_mask"]    # [B,T] real-event mask.
-        B, T = valid.shape             # Read batch size and sequence length.
+        is_real = batch["is_real_event"]    # [B,T] True=real event, False=padding.
+        B, T = is_real.shape           # Read batch size and sequence length.
 
         clean_status = torch.zeros(    # Create all-observed status for clean encoding.
             B, T, 4, dtype=torch.long, device=device # [B,T,4] status tensor on device.
@@ -189,11 +189,11 @@ def collect_prefix_embeddings(         # Build frozen user representations for l
             "rating": batch["rating"],                 # Clean ratings.
             "time_gap_hours": batch["time_gap_hours"], # Clean time gaps.
             "genres": batch["genres"],                 # Clean genres.
-            "valid_mask": valid,                        # Padding mask.
+            "is_real_event": is_real,                  # Real vs padding (not corruption).
         }
         z = model(values, clean_status)["z"] # Encode clean events into [B,T,D].
 
-        lengths = valid.sum(dim=1)     # Number of real events per user sequence.
+        lengths = is_real.sum(dim=1)   # Number of real events per user sequence.
         keep = lengths >= 2            # Need at least one prefix event and one final target event.
         if not keep.any():             # If no sequence in batch is long enough...
             continue                   # Skip this batch.
@@ -378,7 +378,7 @@ def main():                            # Main CLI entry point.
             losses = reconstruction_losses( # Compute reconstruction loss against clean batch.
                 outputs,                 # Model outputs.
                 batch,                   # Clean targets.
-                corrupted.field_mask,    # Loss mask saying where corruption occurred.
+                corrupted.corruption_mask,    # Loss mask saying where corruption occurred.
             )
 
             total = losses["total"]      # Start total objective with reconstruction loss.
@@ -387,8 +387,8 @@ def main():                            # Main CLI entry point.
             if args.mode == "vime":     # VIME adds mask-estimation objective.
                 mask_loss, mask_accuracy = mask_estimation_loss( # Predict which fields were donor-corrupted.
                     outputs,             # Contains mask_logits.
-                    corrupted.field_mask,# Hidden corruption labels.
-                    batch["valid_mask"], # Padding mask.
+                    corrupted.corruption_mask,# Hidden corruption labels.
+                    batch["is_real_event"], # Real vs padding.
                 )
 
                 total = total + args.mask_loss_weight * mask_loss # Add weighted VIME auxiliary loss.
@@ -403,7 +403,7 @@ def main():                            # Main CLI entry point.
 
             if step == 1 or step % 50 == 0: # Log first step and every 50 steps.
                 elapsed = time.perf_counter() - start # Seconds since training started.
-                events = int(batch["valid_mask"].sum()) # Number of real events in current batch.
+                events = int(batch["is_real_event"].sum()) # Number of real events in current batch.
                 message = (              # Build log message.
                     f"mode={args.mode} step={step} "
                     f"loss={np.mean(running[-50:]):.4f} "

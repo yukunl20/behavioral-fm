@@ -9,14 +9,16 @@ class EventEncoder(nn.Module):
     status_mode controls how the encoder represents masked / missing fields:
       ignore       - ignore field_status; the model only sees the corrupted raw value.
       status_embed - use projection(value) + learned status embedding.
-      mask_token   - for MASKED fields, replace the field representation with a learned
-                     field-specific mask token.
+      mask_token   - for MASKED fields only, replace the field representation with a learned
+                     mask token. Tokens are one per field group (movie/rating/time/genres),
+                     not one per status code. Non-MASKED fields keep their projected
+                     original value (status emb is added; OBSERVED adds zero).
 
-    Experiment mapping:
-      zero   -> ignore       # zero-filled mask; encoder is not told it was masked
-      status -> status_embed # zero-fill plus explicit status signal
-      token  -> mask_token   # MAE/BERT-style learned mask token
-      vime   -> ignore       # donor corruption; status must not reveal the corruption label
+    Experiment mapping (CLI --mode -> status_mode + corruption):
+      zero   -> ignore       + zero-fill   # MAE: encoder sees zeros, no mask signal
+      status -> status_embed + zero-fill   # MAE: zeros plus explicit status embedding
+      token  -> mask_token   + zero-fill   # MAE: MASKED fields use a learned mask token
+      vime   -> ignore       + donor fill  # donor values; status hidden so label is not leaked
     """
 
     def __init__(
@@ -68,8 +70,9 @@ class EventEncoder(nn.Module):
             )
 
         if status_mode == "mask_token":
-            self.mask_tokens = nn.Parameter(      # Register mask tokens as trainable parameters
-                torch.randn(4, d) * 0.02          # One small random token per field group
+            # One learnable token per field group (not per status). Only used when status==MASKED.
+            self.mask_tokens = nn.Parameter(
+                torch.randn(4, d) * 0.02
             )
 
         self.fuse = nn.Sequential(          # Fusion network after concatenating field vectors
@@ -85,11 +88,12 @@ class EventEncoder(nn.Module):
         if self.status_mode == "status_embed":
             return x + self.status_emd(status)
 
-        # mask_token: still encode non-masked statuses additively, replace MASKED with token
-        x = x + self.status_emd(status)
-        is_masked = (status == MASKED).unsqueeze(-1)            # [B, T, 1]
-        token = self.mask_tokens[field_index].view(1, 1, -1)    # This field's learned mask token
-        return torch.where(is_masked, token, x)
+        # mask_token: non-MASKED keep projected original value; MASKED -> this field's token.
+        # status_emb is still added for non-MASKED; OBSERVED (padding_idx=0) adds a zero vector.
+        x = x + self.status_emd(status)                         # [B, T, d]
+        is_masked = (status == MASKED).unsqueeze(-1)            # status [B, T] -> [B, T, 1]
+        token = self.mask_tokens[field_index].view(1, 1, -1)    # [d] -> [1, 1, d]; field-group token
+        return torch.where(is_masked, token, x)                 # broadcast -> [B, T, d]
 
 
     def forward(                      # Forward pass: raw fields -> event embeddings
@@ -98,14 +102,28 @@ class EventEncoder(nn.Module):
         rating,                       # [B, T]
         time_gap_hours,               # [B, T]
         genres,                       # [B, T, G]
-        field_status=None,            # [B, T, 4] status code for the four field groups
-        valid_mask=None,              # [B, T] padding mask
+        field_status=None,            # [B, T, 4] int64; see comments below
+        is_real_event=None,           # [B, T] bool; True=real event, False=sequence padding
     ):
+        # field_status: how to treat each field of each event (from corruption, or all 0).
+        # Shape [B, T, 4]: B=batch, T=time, last dim = field groups:
+        #   [..., 0] movie, [..., 1] rating, [..., 2] time_gap, [..., 3] genres
+        # Each entry is a status code:
+        #   0 OBSERVED        - value as given; status emb is zero (padding_idx=0)
+        #   1 NATURAL_MISSING - missing in real data (not pretrain corruption)
+        #   2 UNAVAILABLE     - field not available for this event
+        #   3 MASKED          - deliberately corrupted for pretraining (MAE); triggers mask_token
+        # Example: only rating MAE-masked -> field_status[b, t] = [0, 3, 0, 0]
+        # MAE zero_corrupt sets MASKED where corruption_mask is True; VIME keeps all OBSERVED.
+        # Used below as field_status[..., i] with shape [B, T] in _status_transform.
+        #
+        # Distinguish from corruption_mask [B,T,4] (which fields were corrupted for pretrain)
+        # and is_real_event [B,T] (which timesteps are real vs padding).
 
         B, T = movie_id.shape
 
         if field_status is None:
-            field_status = torch.zeros(    # If no status provided, assume every field is observed
+            field_status = torch.zeros(    # Default: all OBSERVED (0)
                 B, T, 4,
                 dtype=torch.long,
                 device=movie_id.device
@@ -113,28 +131,28 @@ class EventEncoder(nn.Module):
 
         movie = self.movie_emb(movie_id)  # [B, T] -> [B, T, d]
         genre = self.genre_proj(genres)   # [B, T, G] -> [B, T, d]
-        rating_repr = self.rating_proj(   # [B, T] -> [B, T, d]
+        rating_repr = self.rating_proj(   # [B, T] -> [B, T, 1] via unsqueeze -> [B, T, d]
             (rating/5.0).unsqueeze(-1)
         )
-        time_repr = self.time_proj(       # [B, T] -> [B, T, d]
+        time_repr = self.time_proj(       # [B, T] -> [B, T, 1] via unsqueeze -> [B, T, d]
             torch.log1p(time_gap_hours.clamp_min(0.0)).unsqueeze(-1)
         )
 
-        movie = self._status_transform(movie, field_status[..., 0], 0)
+        movie = self._status_transform(movie, field_status[..., 0], 0)       # status [B, T]
         rating_repr = self._status_transform(
-            rating_repr, field_status[..., 1], 1
+            rating_repr, field_status[..., 1], 1                            # status [B, T]
         )
         time_repr = self._status_transform(
-            time_repr, field_status[..., 2], 2
+            time_repr, field_status[..., 2], 2                              # status [B, T]
         )
-        genre = self._status_transform(genre, field_status[..., 3], 3)
+        genre = self._status_transform(genre, field_status[..., 3], 3)      # status [B, T]
 
         event = self.fuse(
             torch.cat([movie, rating_repr, time_repr, genre], dim=-1)
         )
 
-        if valid_mask is not None:
-            event = event * valid_mask.unsqueeze(-1)
+        if is_real_event is not None:
+            event = event * is_real_event.unsqueeze(-1)  # zero out padded timesteps
         return event
 
 
@@ -166,7 +184,7 @@ class MaskedEventModel(nn.Module):
             time_gap_hours=values["time_gap_hours"],
             genres=values["genres"],
             field_status=field_status,
-            valid_mask=values["valid_mask"],
+            is_real_event=values["is_real_event"],
         )
         return {
             "z": z,
