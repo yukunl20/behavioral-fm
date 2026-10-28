@@ -35,10 +35,10 @@ class DecayMemory(nn.Module):
         for t in range(length):
             real = is_real_event[:, t, None]  # [B, 1] real vs padding
             current = z[:, t, :]  # [B, W] event embedding
-            delta = time_gap_hours[:, t, :].clamp_min(1 / 60)  # [B, ...] hours since last real
-            ratio = delta / self.tau_hours  # [B, ...] Δt / τ
-            retain = torch.exp(-ratio)[:, None]  # [B, 1] keep old state: e^{-Δt/τ}
-            arrival = (-torch.expm1(-ratio))[:, None]  # [B, 1] mix in current: 1 - e^{-Δt/τ}
+            delta = time_gap_hours[:, t].clamp_min(1 / 60)  # [B] hours since last real (gaps are [B, T])
+            ratio = delta / self.tau_hours  # [B] Δt / τ
+            retain = torch.exp(-ratio).unsqueeze(-1)  # [B, 1] keep old state: e^{-Δt/τ}
+            arrival = (-torch.expm1(-ratio)).unsqueeze(-1)  # [B, 1] mix in current: 1 - e^{-Δt/τ}
             updated = retain * state + arrival * current  # [B, W] decayed blend
             updated = torch.where(seen, updated, current)  # first real event: no decay
             state = torch.where(real, updated, state)  # padding: leave state unchanged

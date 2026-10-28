@@ -1,33 +1,4 @@
-from dataclasses import dataclass
+# Prefer: from src.config.experiment_modes import experiment_spec
+from src.config.experiment_modes import EXPERIMENTS, ExperimentSpec, experiment_spec
 
-@dataclass(frozen=True) # prevent accidental mutation of an experiment specification
-class ExperimentSpec:
-    corruption: str # Raw-value corruption: zero fill or donor replacement
-    status_mode: str # Encoder implementation behavior
-
-# CLI labels
-EXPERIMENTS = {
-    "zero": ExperimentSpec(
-        corruption="zero", status_mode="ignore"         # No visible status signal.
-    ), 
-    "status": ExperimentSpec(
-        corruption="zero", status_mode="status_embed"   # Add a learned observation-state embedding.
-    ),
-    "token": ExperimentSpec(
-        corruption="zero", status_mode="mask_token"     # Replace selected projected fields with learned tokens.
-    ),
-    "vime": ExperimentSpec(
-        corruption="donor", status_mode="ignore"        # Hide donor-corruption labels from inputs.
-    ), 
-}
-
-
-def experiment_spec(name: str) -> ExperimentSpec:
-    try:
-        return EXPERIMENTS[name]
-    except KeyError as error:
-        raise ValueError(
-            f"unknown experiment={name}; choose {sorted(EXPERIMENTS)}"
-        ) from error 
-
-
+__all__ = ["EXPERIMENTS", "ExperimentSpec", "experiment_spec"]

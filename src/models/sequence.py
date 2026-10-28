@@ -54,7 +54,7 @@ class BehavioralSequenceModel(nn.Module):
             time_gap_hours=values["time_gap_hours"], # [B,T] time features must be cutoff-safe.
             genres=values["genres"], # [B,T,G] multi-hot movie metadata.
             field_status=field_status, # [B,T,4] encoder-visible observation state.
-            valid_mask=values["is_real_event"], # real event or padding; True = real event, False = padding
+            is_real_event=values["is_real_event"], # real event or padding; True = real event, False = padding
         )
 
 
